@@ -1,17 +1,17 @@
-NAME = library
+NAME = concurrentBags
 
 CC ?= gcc
 RM ?= @rm
 MKDIR ?= @mkdir
 
-CFLAGS := -O3 -Wall -Wextra -fopenmp
+CFLAGS := -O3 -Wall -Wextra -fopenmp -latomic
 
 SRC_DIR = src
 BUILD_DIR = build
 DATA_DIR = data
 INCLUDES = inc
 
-OBJECTS = $(NAME).o
+OBJECTS = $(NAME).o UT_concurrentBags.o
 
 
 all: $(BUILD_DIR) $(NAME) $(NAME).so
@@ -36,6 +36,29 @@ $(NAME): $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
 $(NAME).so: $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
 	@echo "Linking $(NAME)"
 	$(CC) $(CFLAGS) -fPIC -shared -o $@ $^ 
+
+debug: $(BUILD_DIR) $(NAME) $(NAME).so
+	@echo "Built $(NAME)"
+
+$(DATA_DIR):
+	@echo "Creating data directory: $(DATA_DIR)"
+	$(MKDIR) $(DATA_DIR)
+
+$(BUILD_DIR):
+	@echo "Creating build directory: $(BUILD_DIR)"
+	$(MKDIR) $(BUILD_DIR)
+
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	@echo "Compiling $<"
+	$(CC) $(CFLAGS) -ggdb -fPIC -I$(INCLUDES) -c -o $@ $<
+
+$(NAME): $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
+	@echo "Linking $(NAME)"
+	$(CC) $(CFLAGS) -ggdb -o $@ $^
+
+$(NAME).so: $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
+	@echo "Linking $(NAME)"
+	$(CC) $(CFLAGS) -ggdb -fPIC -shared -o $@ $^ 
 
 bench:
 	@echo "This could run a sophisticated benchmark"

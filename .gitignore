@@ -3,3 +3,7 @@ data*
 *.log
 *.aux
 *.so
+.vscode*
+*concurrentBags
+*library
+*UT_concurrentBags
