@@ -6,7 +6,7 @@ Define some constants required for Code in the paper
 #define WORD_SIZE sizeof(int)
 
 // Memory model (Sequential Consistency?)
-//#define SC
+#define SC
 
 // Data type for the nodes
 #define DT int

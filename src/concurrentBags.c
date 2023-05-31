@@ -32,7 +32,7 @@
 // Initialization variables
 int Nr_threads;
 // Shared variables
-block_t ** globalHeadBlock;
+block_t * globalHeadBlock[MAX_NR_THREADS];
 // Thread-local storage
 block_t *threadBlock, *stealBlock, *stealPrev;
 bool foundAdd;
@@ -41,12 +41,12 @@ int threadID; // Unique number between 0 ... Nr_threads
 
 struct block_t
 {
-    _Atomic (DT *) nodes[MAX_BLOCK_SIZE]; // changed void*
-    _Atomic (long) notifyAdd[MAX_NR_THREADS / WORD_SIZE];
+    DT *  _Atomic nodes[MAX_BLOCK_SIZE]; // changed void*
+    long _Atomic notifyAdd[MAX_NR_THREADS / WORD_SIZE];
     /* Attention! Also holds marked1 and marked2 in its lsb
     Therefore have to mask when actually dereferencing the pointer
     */
-    _Atomic (block_t *) next;
+    block_t * _Atomic next;
 };
 
 void Mark1Block(block_t *block)
@@ -54,7 +54,7 @@ void Mark1Block(block_t *block)
     for (;;)
     {
         block_t *next = {block->next};
-        block_t *update = {next};
+        block_t *update = {next}; // TODO
         update = setmark1(update);
         //mark2 should have been copied
 
@@ -97,10 +97,12 @@ bool NotifyCheck(block_t *block, int Id)
 
 void InitBag(int num_threads)
 {
+    /*
     Nr_threads = num_threads;
     block_t* hb[Nr_threads];
     globalHeadBlock = hb;
-
+    */
+    Nr_threads = num_threads;
     for (int i = 0; i < Nr_threads; i++)
         globalHeadBlock[i] = (block_t *){0};
 }
@@ -131,7 +133,7 @@ void Add(void *item)
             threadBlock = block;
             head = 0;
         }
-        else if (block->nodes[head] == NULL)
+        else if (block == NULL || block->nodes[head] == NULL)
         {
             NotifyAll(block);
             block->nodes[head] = item;
@@ -286,8 +288,7 @@ void *TryRemoveAny()
     int round = 0;
     for (;;)
     {
-        if (block == NULL || (head < 0 && getpointer(block->next) ==
-                                              NULL))
+        if (block == NULL || (head < 0 && getpointer(block->next) == NULL))
         {
             do
             {
@@ -360,7 +361,8 @@ void *TryRemoveAny()
 //-------------Memory Management-----------------
 block_t *NewNode(int size)
 {
-    return malloc(size);
+    block_t * new = malloc(size);
+    return new;
 };
 
 void DeleteNode(block_t *node)
@@ -375,3 +377,102 @@ block_t *DeRefLink(struct block_t ** link) { return (block_t *)*link; }
 void ReScan(block_t *node) {
     //TODO
 };
+
+#include <omp.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(int argc, char * argv[]) {
+    double tic, toc;
+    int threads;
+    if (argc == 2)
+    {
+        threads = (int)strtol(argv[1], NULL, 10);
+    } else threads = 10;
+
+    printf("Running with %d threads\r\n", threads);
+
+    
+    InitBag(threads);
+
+    omp_set_num_threads(threads);
+
+    tic = omp_get_wtime();
+
+    /*
+    #pragma omp parallel for
+    for (int i = 0; i < omp_get_num_threads(); i++)
+    {
+        int id = omp_get_thread_num();
+        InitThread(id);
+    }
+    for (int i = 0; i < omp_get_num_threads(); i++)
+    {
+        int id = omp_get_thread_num();
+        if (id == 0)
+        {
+            int *item = malloc(sizeof(int));
+            *item = id;
+            Add(item);
+        } else
+        {
+            int *result = (int*)TryRemoveAny();
+            if (result == NULL)
+            {
+                 printf("Bag was empty\r\n");
+            } else
+            printf("Received %d\r\n", *result);
+        }
+        
+        
+    }
+    */
+
+    long genresult = 0;
+    int multiply = 100;
+    #pragma omp parallel for reduction(+:genresult) private(threadBlock, stealBlock, stealPrev, foundAdd, threadHead, stealHead, stealIndex, threadID)
+    for (int i = 0; i < omp_get_num_threads(); i++)
+    {
+        int id = omp_get_thread_num();
+        int mult = multiply;
+        long result = 0;
+        InitThread(id);
+
+        printf("Hello from thread %d\r\n", id + 1);
+        int *inc = NULL;
+        
+        if (i < threads/2)
+        {
+        for (int j = 0; j < mult*(id+1); j++)
+        {
+            int *item = malloc(sizeof(int));
+            *item = id + 1;
+            Add(item);
+        }
+        } else {
+        
+        do
+        {
+            inc = (int*)(TryRemoveAny());
+            if (inc != (int*)NULL) {
+                result += (long)*inc;
+                genresult += (long)*inc;
+            }
+        } while (inc != NULL);
+        printf("Thread %d got result %ld\r\n", id + 1, result);
+        }
+                
+    }
+    long expected = 0;
+    for (int i = 0; i < threads/2; i++)
+    {
+        expected += multiply*(i+1)*(i+1);
+    }
+    
+    printf("Got %ld overall, from %ld possible\r\n", genresult, expected);
+    
+        
+    toc = omp_get_wtime();
+
+    printf("Unit test took %lf seconds \r\n", toc - tic);
+} 

@@ -4,14 +4,14 @@ CC ?= gcc
 RM ?= @rm
 MKDIR ?= @mkdir
 
-CFLAGS := -O3 -Wall -Wextra -fopenmp -latomic
+CFLAGS := -O0 -Wall -Wextra -fopenmp -latomic
 
 SRC_DIR = src
 BUILD_DIR = build
 DATA_DIR = data
 INCLUDES = inc
 
-OBJECTS = $(NAME).o UT_concurrentBags.o
+OBJECTS = $(NAME).o #UT_concurrentBags.o
 
 
 all: $(BUILD_DIR) $(NAME) $(NAME).so
