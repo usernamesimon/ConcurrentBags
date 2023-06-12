@@ -37,6 +37,7 @@ void* deq(){
     omp_set_lock(&deq_lock);
     if (head->next == NULL)
     {
+        omp_unset_lock(&deq_lock);
         return NULL;
     }
     result = head->next->val;
@@ -60,7 +61,7 @@ int main(int argc, char * argv[]){
     printf("Running loop\n");
     #pragma omp parallel for
     for (int i = 0; i < 1000; i++){
-        if ((float) rand() / (float)(RAND_MAX) < 0.5 ){ enq(&i); printf("Thread %d adding\n",omp_get_thread_num()); }
+        if ((float) rand() / (float)(RAND_MAX) < 0.5 ){printf("Thread %d adding\n",omp_get_thread_num()); enq(&i);}
         else {
         printf("Thread %d removing\n",omp_get_thread_num());
           int *res = (int *)(deq());
