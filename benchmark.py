@@ -1,20 +1,15 @@
+#!/usr/bin/python3
 import ctypes
 import os
 import datetime
 
-class cBenchCounters(ctypes.Structure):
-    '''
-    This has to match the returned struct in library.c
-    '''
-    _fields_ = [ ("failed_turns", ctypes.c_int),
-                 ("successful_lends", ctypes.c_int) ]
 
 class cBenchResult(ctypes.Structure):
     '''
     This has to match the returned struct in library.c
     '''
     _fields_ = [ ("time", ctypes.c_float),
-                 ("counters", cBenchCounters) ]
+                  ("num_items", ctypes.c_int) ]
 
 class Benchmark:
     '''
@@ -75,23 +70,23 @@ def benchmark():
     Requires the binary to also be present as a shared library.
     '''
     basedir = os.path.dirname(os.path.abspath(__file__))
-    binary = ctypes.CDLL( f"{basedir}/library.so" )
+    binary = ctypes.CDLL( f"{basedir}/concurrentBags.so" )
     # Set the result type for each benchmark function
     binary.small_bench.restype = cBenchResult
 
     # The number of threads. This is the x-axis in the benchmark, i.e., the
     # parameter that is 'sweeped' over.
-    num_threads = [1,2,4,8,16]#,32,64,128,256]
+    num_threads = [1,2,4]#,32,64,128,256]
 
     # Parameters for the benchmark are passed in a tuple, here (1000,). To pass
     # just one parameter, we cannot write (1000) because that would not parse
     # as a tuple, instead python understands a trailing comma as a tuple with
     # just one entry.
-    smallbench_10 = Benchmark(binary.small_bench, (10,), 3,
-                              num_threads, basedir, "smallbench_10")
+    smallbench_10 = Benchmark(binary.small_bench, (100,), 3,
+                              num_threads, basedir, "smallbench_100")
 
-    smallbench_100 = Benchmark(binary.small_bench, (100,), 3,
-                               num_threads, basedir, "smallbench_100")
+    smallbench_100 = Benchmark(binary.small_bench, (1000,), 3,
+                               num_threads, basedir, "smallbench_1000")
 
     smallbench_10.run()
     smallbench_10.write_avg_data()
