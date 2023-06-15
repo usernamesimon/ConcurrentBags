@@ -4,7 +4,8 @@ CC ?= gcc
 RM ?= @rm
 MKDIR ?= @mkdir
 
-CFLAGS := -O0 -Wall -Wextra -fopenmp -latomic
+CFLAGS := -O3 -Wall -Wextra -fopenmp -latomic
+CFLAGSD := -O0 -Wall -Wextra -fopenmp -latomic -ggdb
 
 SRC_DIR = src
 BUILD_DIR = build
@@ -12,6 +13,7 @@ DATA_DIR = data
 INCLUDES = inc
 
 OBJECTS = $(NAME).o #UT_concurrentBags.o
+OBJECTSD = $(NAME).od
 
 
 all: $(BUILD_DIR) $(NAME) $(NAME).so
@@ -37,28 +39,28 @@ $(NAME).so: $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
 	@echo "Linking $(NAME)"
 	$(CC) $(CFLAGS) -fPIC -shared -o $@ $^ 
 
-debug: $(BUILD_DIR) $(NAME) $(NAME).so
-	@echo "Built $(NAME)"
+debug: $(BUILD_DIR) $(NAME).d $(NAME).sod
+	@echo "Built $(NAME).d"
 
-$(DATA_DIR):
-	@echo "Creating data directory: $(DATA_DIR)"
-	$(MKDIR) $(DATA_DIR)
+# $(DATA_DIR):
+# 	@echo "Creating data directory: $(DATA_DIR)"
+# 	$(MKDIR) $(DATA_DIR)
 
-$(BUILD_DIR):
-	@echo "Creating build directory: $(BUILD_DIR)"
-	$(MKDIR) $(BUILD_DIR)
+# $(BUILD_DIR):
+# 	@echo "Creating build directory: $(BUILD_DIR)"
+# 	$(MKDIR) $(BUILD_DIR)
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	@echo "Compiling $<"
-	$(CC) $(CFLAGS) -ggdb -fPIC -I$(INCLUDES) -c -o $@ $<
+$(BUILD_DIR)/%.od: $(SRC_DIR)/%.c
+	@echo "Compiling $< in debug mode"
+	$(CC) $(CFLAGSD) -fPIC -I$(INCLUDES) -c -o $@ $<
 
-$(NAME): $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
-	@echo "Linking $(NAME)"
-	$(CC) $(CFLAGS) -ggdb -o $@ $^
+$(NAME).d: $(foreach object,$(OBJECTSD),$(BUILD_DIR)/$(object))
+	@echo "Linking $@"
+	$(CC) $(CFLAGSD) -o $@ $^
 
-$(NAME).so: $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
-	@echo "Linking $(NAME)"
-	$(CC) $(CFLAGS) -ggdb -fPIC -shared -o $@ $^ 
+$(NAME).sod: $(foreach object,$(OBJECTSD),$(BUILD_DIR)/$(object))
+	@echo "Linking $@"
+	$(CC) $(CFLAGSD) -fPIC -shared -o $@ $^ 
 
 bench:
 	@echo "This could run a sophisticated benchmark"
@@ -86,5 +88,6 @@ clean:
 	@echo "Cleaning build directory: $(BUILD_DIR) and binaries: $(NAME) $(NAME).so"
 	$(RM) -Rf $(BUILD_DIR)
 	$(RM) -f $(NAME) $(NAME).so
+	$(RM) -f $(NAME).d $(NAME).sod
 
 .PHONY: clean report

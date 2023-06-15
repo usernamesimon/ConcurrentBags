@@ -6,6 +6,9 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <string.h>
+
+#include <assert.h>
 
 #ifdef SC
 #define CAS(_a, _e, _d) atomic_compare_exchange_weak(_a, _e, _d)
@@ -29,55 +32,56 @@
 #define ismarked2(_markedpointer) ((((uintptr_t)_markedpointer) & MARK_BIT2) != 0x0)
 #define setmark2(_markedpointer) ((block_t *)(((long)_markedpointer) | MARK_BIT2))
 
-// Initialization variables
-int Nr_threads;
+
 // Shared variables
-block_t * globalHeadBlock[MAX_NR_THREADS];
-// Thread-local storage
-block_t *threadBlock, *stealBlock, *stealPrev;
-bool foundAdd;
-int threadHead, stealHead, stealIndex;
-int threadID; // Unique number between 0 ... Nr_threads
+block_t * _Atomic globalHeadBlock[MAX_NR_THREADS];
+
+struct TLS_t{
+    // Thread-local storage
+    block_t * threadBlock, * stealBlock, * stealPrev;
+    bool foundAdd;
+    int threadHead, stealHead, stealIndex;
+    int threadID; // Unique number between 0 ... MAX_NR_THREADS
+};
 
 struct block_t
 {
-    DT *  _Atomic nodes[MAX_BLOCK_SIZE]; // changed void*
+    DT * nodes[MAX_BLOCK_SIZE]; // changed void*
     long _Atomic notifyAdd[MAX_NR_THREADS / WORD_SIZE];
     /* Attention! Also holds marked1 and marked2 in its lsb
     Therefore have to mask when actually dereferencing the pointer
     */
-    block_t * _Atomic next;
+    block_t* _Atomic next;
 };
 
 void Mark1Block(block_t *block)
 {
     for (;;)
     {
-        block_t *next = {block->next};
-        block_t *update = {next}; // TODO
-        update = setmark1(update);
-        //mark2 should have been copied
+        block_t* next = block->next;
+        block_t* new = next;
+        new = setmark1(new);
 
         if (getpointer(next) == NULL ||
             ismarked1(next) ||
-            CAS(&block->next, &next, update))
+            CAS(&block->next, &next, new))
             break;
     }
 }
 
 void NotifyAll(block_t *block)
 {
-    for (int i = 0; i < (int)(Nr_threads / WORD_SIZE); i++)
+    for (int i = 0; i < (int)(MAX_NR_THREADS / WORD_SIZE); i++)
         block->notifyAdd[i] = 0;
 }
 
-block_t *NewBlock()
+block_t* _Atomic NewBlock()
 {
-    block_t *block = (block_t *)NewNode(sizeof(block_t));
-    block->next = NULL;
-    NotifyAll(block);
+    block_t* _Atomic block = NewNode();
+    block_t* work = block;
+    NotifyAll(work);
     for (int i = 0; i < MAX_BLOCK_SIZE; i++)
-        block->nodes[i] = NULL;
+        work->nodes[i] = NULL;
     return block;
 }
 
@@ -99,45 +103,47 @@ void InitBag(int num_threads)
 {
     /*
     Nr_threads = num_threads;
-    block_t* hb[Nr_threads];
+    block_t* hb[MAX_NR_THREADS];
     globalHeadBlock = hb;
     */
-    Nr_threads = num_threads;
-    for (int i = 0; i < Nr_threads; i++)
-        globalHeadBlock[i] = (block_t *){0};
+    for (int i = 0; i < MAX_NR_THREADS; i++)
+        globalHeadBlock[i] = NewBlock();
 }
 
-void InitThread(int id)
+TLS_t *InitThread(int id)
 {
-    threadID = id;
-    threadBlock = globalHeadBlock[threadID];
-    threadHead = MAX_BLOCK_SIZE;
-    stealIndex = 0;
-    stealBlock = (block_t *)NULL;
-    stealPrev = (block_t *)NULL;
-    stealHead = MAX_BLOCK_SIZE;
+    TLS_t *thread = (TLS_t*)malloc(sizeof(TLS_t));
+    thread->threadID = id;
+    thread->threadBlock = globalHeadBlock[thread->threadID];
+    thread->threadHead = MAX_BLOCK_SIZE;
+    thread->stealIndex = 0;
+    thread->stealBlock = (block_t *)NULL;
+    thread->stealPrev = (block_t *)NULL;
+    thread->stealHead = MAX_BLOCK_SIZE;
+    return thread;
 }
 
-void Add(void *item)
+void Add(TLS_t *thread, void *item)
 {
-    int head = threadHead;
-    block_t *block = threadBlock;
+    int head = thread->threadHead;
+    block_t *block = thread->threadBlock;
     for (;;)
     {
         if (head == MAX_BLOCK_SIZE)
         {
             block_t *oldblock = block;
             block = NewBlock();
-            block->next = oldblock;
-            globalHeadBlock[threadID] = block;
-            threadBlock = block;
+            block_t* new = getpointer(oldblock); //equivalent to setting flags to false
+            block->next = new; //? true, true?
+            globalHeadBlock[thread->threadID] = block;
+            thread->threadBlock = block;
             head = 0;
         }
-        else if (block == NULL || block->nodes[head] == NULL)
+        else if (block->nodes[head] == NULL)
         {
             NotifyAll(block);
             block->nodes[head] = item;
-            threadHead = head + 1;
+            thread->threadHead = head + 1;
             return;
         }
         else
@@ -145,84 +151,81 @@ void Add(void *item)
     }
 }
 
-block_t *NextStealBlock(block_t *cblock)
+block_t *NextStealBlock(TLS_t *thread, block_t *block)
 {
-    block_t *block = {cblock};
-    block_t *next;
+    block_t* next;
     for (;;)
     {
         if (block == NULL)
         {
-            block = DeRefLink(&globalHeadBlock[stealIndex]);
+            block = DeRefLink(&globalHeadBlock[thread->stealIndex]);
             break;
         }
         next = DeRefLink(&block->next);
-        if (ismarked2(next))
-            Mark1Block(next);
-        if (stealPrev == NULL || getpointer(next) == NULL)
+        if (ismarked2(next)) Mark1Block(next);
+        if (thread->stealPrev == NULL || getpointer(next) == NULL)
         {
             if (ismarked1(next))
             {
-                if (getpointer(next))
-                    NotifyAll(getpointer(next));
-                if (CAS(&globalHeadBlock[stealIndex], &block, getpointer(next)))
+                if (getpointer(next) != NULL) NotifyAll(getpointer(next));
+                if (CAS(&globalHeadBlock[thread->stealIndex], &block, getpointer(next)))
                 {
-                    block->next = NULL;
+                    block->next = setmark1((block_t*){NULL});
                     DeleteNode(block);
                     ReScan(next);
                 }
                 else
                 {
-                    stealPrev = NULL;
-                    block = DeRefLink(&globalHeadBlock[stealIndex]);
+                    thread->stealPrev = NULL;
+                    block = DeRefLink(&globalHeadBlock[thread->stealIndex]);
                     continue;
                 }
             }
             else
-                stealPrev = block;
+                thread->stealPrev = block;
         }
         else
         {
             if (ismarked1(next))
             {
-                block_t *prevnext = {getpointer(block)};
-                if (ismarked2(stealPrev->next)) prevnext = setmark2(prevnext);
-
-                if (CAS(&stealPrev->next, &prevnext, getpointer(next)))
+                block_t* copy = thread->stealPrev->next;
+                block_t* prevnext = (block_t*)getpointer(block);
+                if (ismarked2(copy)) prevnext = setmark2(prevnext);
+                block_t* new = (block_t*){next};
+                
+                if (CAS(&thread->stealPrev->next, &prevnext, new))
                 {
-                    block->next = NULL;
-                    block->next = setmark1(block->next);
+                    block->next = setmark1(NULL);
                     DeleteNode(block);
                     ReScan(next);
                 }
                 else
                 {
-                    stealPrev = NULL;
-                    block = DeRefLink(&globalHeadBlock[stealIndex]);
+                    thread->stealPrev = NULL;
+                    block = DeRefLink(&globalHeadBlock[thread->stealIndex]);
                     continue;
                 }
             }
-            else if (block == stealBlock)
+            else if (block == thread->stealBlock)
             {
-                block_t* value = getpointer(block);
-                value = setmark2(value);
-
-                if (CAS(&stealPrev->next, &block, value))
+                block_t* value = setmark2(getpointer(block));
+                block_t* expect = getpointer(block);
+                if (CAS(&thread->stealPrev->next, &expect, value))
                 {
                     Mark1Block(block);
                     continue;
                 }
                 else
                 {
-                    stealPrev = NULL;
-                    block = DeRefLink(&globalHeadBlock[stealIndex]);
+                    thread->stealPrev = NULL;
+                    block = DeRefLink(&globalHeadBlock[thread->stealIndex]);
                     continue;
                 }
             }
             else
-                stealPrev = block;
+                thread->stealPrev = block;
         }
-        if (block == stealBlock || getpointer(next) == stealBlock)
+        if (block == thread->stealBlock || getpointer(next) == thread->stealBlock)
         {
             block = getpointer(next);
             break;
@@ -232,39 +235,39 @@ block_t *NextStealBlock(block_t *cblock)
     return block;
 }
 
-void *TryStealBlock(int round)
+void *TryStealBlock(TLS_t *thread, int round)
 {
-    int head = stealHead;
-    block_t *block = stealBlock;
-    foundAdd = false;
+    int head = thread->stealHead;
+    block_t *block = thread->stealBlock;
+    thread->foundAdd = false;
     if (block == NULL)
     {
-        block = DeRefLink(&globalHeadBlock[stealIndex]);
-        stealBlock = block;
-        stealHead = head = 0;
+        block = DeRefLink(&globalHeadBlock[thread->stealIndex]);
+        thread->stealBlock = block;
+        thread->stealHead = head = 0;
     }
     if (head == MAX_BLOCK_SIZE)
     {
-        stealBlock = block = NextStealBlock(block);
+        thread->stealBlock = block = NextStealBlock(thread, block);
         head = 0;
     }
     if (block == NULL)
     {
-        stealIndex = (stealIndex + 1) % Nr_threads;
-        stealHead = 0;
-        stealBlock = NULL;
-        stealPrev = NULL;
+        thread->stealIndex = (thread->stealIndex + 1) % MAX_NR_THREADS;
+        thread->stealHead = 0;
+        thread->stealBlock = NULL;
+        thread->stealPrev = NULL;
         return NULL;
     }
     if (round == 1)
-        NotifyStart(block, threadID);
-    else if (round > 1 && NotifyCheck(block, threadID))
-        foundAdd = true;
+        NotifyStart(block, thread->threadID);
+    else if (round > 1 && NotifyCheck(block, thread->threadID))
+        thread->foundAdd = true;
     for (;;)
     {
         if (head == MAX_BLOCK_SIZE)
         {
-            stealHead = head;
+            thread->stealHead = head;
             return NULL;
         }
         else
@@ -274,39 +277,39 @@ void *TryStealBlock(int round)
                 head++;
             else if (CAS(&block->nodes[head], &data, NULL))
             {
-                stealHead = head;
+                thread->stealHead = head;
                 return data;
             }
         }
     }
 }
 
-void *TryRemoveAny()
+void *TryRemoveAny(TLS_t *thread)
 {
-    int head = threadHead - 1;
-    block_t *block = threadBlock;
+    int head = thread->threadHead - 1;
+    block_t *block = thread->threadBlock;
     int round = 0;
     for (;;)
     {
-        if (block == NULL || (head < 0 && getpointer(block->next) == NULL))
+        if (block == NULL || (head < 0 && getpointer(DeRefLink(&block->next)) == NULL))
         {
             do
             {
                 int i = 0;
                 do
                 {
-                    void *result = TryStealBlock(round);
+                    void *result = TryStealBlock(thread, round);
                     if (result != NULL)
                         return result;
-                    if (foundAdd)
+                    if (thread->foundAdd)
                     {
                         round = 0;
                         i = 0;
                     }
-                    else if (stealBlock == NULL)
+                    else if (thread->stealBlock == NULL)
                         i++;
-                } while (i < Nr_threads);
-            } while (++round <= Nr_threads);
+                } while (i < MAX_NR_THREADS);
+            } while (++round <= MAX_NR_THREADS);
             return NULL;
         }
         if (head < 0)
@@ -314,31 +317,30 @@ void *TryRemoveAny()
             Mark1Block(block);
             for (;;)
             {
-                block_t *next = {DeRefLink(&block->next)};
+                block_t* next = DeRefLink(&block->next);
                 if (ismarked2(next))
-                    Mark1Block(next);
+                    Mark1Block(getpointer(next)); //Dropping flag 2???
                 if (ismarked1(next))
                 {
-                    if (getpointer(next))
-                        NotifyAll(getpointer(next));
-                    if (CAS(&globalHeadBlock[threadID],
+                    if (getpointer(next)!=NULL)
+                        NotifyAll(getpointer(next)); //Dropping flags ???
+                    if (CAS(&globalHeadBlock[thread->threadID],
                             &block, getpointer(next)))
                     {
-                        block->next = NULL;
-                        block->next = setmark1(block->next);
+                        block->next = (block_t*)setmark1(NULL);
                         DeleteNode(block);
                         ReScan(next);
                         block = getpointer(next);
                     }
                     else
                         block = DeRefLink(&globalHeadBlock
-                                              [threadID]);
+                                              [thread->threadID]);
                 }
                 else
                     break;
             }
-            threadBlock = block;
-            threadHead = MAX_BLOCK_SIZE;
+            thread->threadBlock = block;
+            thread->threadHead = MAX_BLOCK_SIZE;
             head = MAX_BLOCK_SIZE - 1;
         }
         else
@@ -348,20 +350,21 @@ void *TryRemoveAny()
                 head--;
             else if (CAS(&block->nodes[head], &data, NULL))
             {
-                threadHead = head;
+                thread->threadHead = head;
                 return data;
             }
         }
     }
 }
 
-
-
-
 //-------------Memory Management-----------------
-block_t *NewNode(int size)
+
+block_t* _Atomic NewNode(void)
 {
-    block_t * new = malloc(size);
+    block_t* _Atomic new = (block_t* _Atomic)malloc(sizeof(block_t));
+    block_t* work = new;
+    work->next = (block_t* _Atomic)NULL;
+    assert(new!=NULL);
     return new;
 };
 
@@ -370,12 +373,14 @@ void DeleteNode(block_t *node)
     // TODO ?
 };
 
-block_t *DeRefLink(struct block_t ** link) { return (block_t *)*link; }
+block_t *DeRefLink(struct block_t * _Atomic* link) { 
+    if (link == NULL) return NULL;
+    return (block_t *)LOAD(link); }
 
 // void ReleaseRef(block_t *node);
 
-void ReScan(block_t *node) {
-    //TODO
+void ReScan(block_t* _Atomic node) {
+    LOAD(&node);
 };
 
 #include <omp.h>
@@ -429,16 +434,30 @@ int main(int argc, char * argv[]) {
     */
 
     long genresult = 0;
-    int multiply = 100;
-    #pragma omp parallel for reduction(+:genresult) private(threadBlock, stealBlock, stealPrev, foundAdd, threadHead, stealHead, stealIndex, threadID)
+    int multiply = 500;
+    TLS_t* threadbuf[threads];
+    TLS_t** threadar = threadbuf;
+    TLS_t* thread;
+
+    // #pragma omp parallel for private(thread) shared(threads)
+    // for (int i = 0; i < threads; i++)
+    // {
+    //     int id = omp_get_thread_num();        
+    //     thread = InitThread(id);
+    //     threadar[id] = thread;        
+    //     printf("Hello from thread %d\r\n", id + 1);
+    // }
+    
+    
+    #pragma omp parallel for reduction(+:genresult) private(thread) shared(globalHeadBlock)
     for (int i = 0; i < omp_get_num_threads(); i++)
     {
         int id = omp_get_thread_num();
+        //thread = threadar[id];
+        thread = InitThread(id);
+        printf("Hello from thread %d\r\n", id + 1);
         int mult = multiply;
         long result = 0;
-        InitThread(id);
-
-        printf("Hello from thread %d\r\n", id + 1);
         int *inc = NULL;
         
         if (i < threads/2)
@@ -447,13 +466,13 @@ int main(int argc, char * argv[]) {
         {
             int *item = malloc(sizeof(int));
             *item = id + 1;
-            Add(item);
+            Add(thread, item);
         }
         } else {
         
         do
         {
-            inc = (int*)(TryRemoveAny());
+            inc = (int*)(TryRemoveAny(thread));
             if (inc != (int*)NULL) {
                 result += (long)*inc;
                 genresult += (long)*inc;
