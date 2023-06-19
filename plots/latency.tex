@@ -16,22 +16,22 @@
 
       % Each graph is added via \addplot and a .data file, and
       % add a legend entry for the previous graph.
-      \addplot table [x=x,y=avg_time]{\DATAPATH/bench_add_remove_10000/bench_add_remove_10000.data};
+      \addplot table [x=x,y=avg_time]{\DATAPATH/bench_add_remove_\NUMCALLS/bench_add_remove_\NUMCALLS.data};
       \addlegendentry{add remove}
 
-      \addplot table [x=x,y=avg_time]{\DATAPATH/bench_half_half_10000/bench_half_half_10000.data};
-      \addlegendentry{half half}
+      % \addplot table [x=x,y=avg_time]{\DATAPATH/bench_half_half_\NUMCALLS/bench_half_half_\NUMCALLS.data};
+      % \addlegendentry{half half}
 
-      \addplot table [x=x,y=avg_time]{\DATAPATH/bench_one_consumer_10000/bench_one_consumer_10000.data};
+      \addplot table [x=x,y=avg_time]{\DATAPATH/bench_one_consumer_\NUMCALLS/bench_one_consumer_\NUMCALLS.data};
       \addlegendentry{one consumer}
 
-      \addplot table [x=x,y=avg_time]{\DATAPATH/bench_one_producer_10000/bench_one_producer_10000.data};
+      \addplot table [x=x,y=avg_time]{\DATAPATH/bench_one_producer_\NUMCALLS/bench_one_producer_\NUMCALLS.data};
       \addlegendentry{one producer}
 
-      \addplot table [x=x,y=avg_time]{\DATAPATH/benchrand_10000/benchrand_10000.data};
+      \addplot table [x=x,y=avg_time]{\DATAPATH/benchrand_\NUMCALLS/benchrand_\NUMCALLS.data};
       \addlegendentry{random}
 
-      \addplot table [x=x,y=avg_time]{\DATAPATH/benchrand_10000_queue/benchrand_10000_queue.data};
+      \addplot table [x=x,y=avg_time]{\DATAPATH/benchrand_\NUMCALLS_queue/benchrand_\NUMCALLS_queue.data};
       \addlegendentry{random queue}
 
     \end{axis}
