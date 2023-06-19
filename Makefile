@@ -65,6 +65,15 @@ $(NAME).sod: $(foreach object,$(OBJECTSD),$(BUILD_DIR)/$(object))
 bench:
 	@echo "This could run a sophisticated benchmark"
 
+plot:
+	@echo "Plotting results from nebula_data"
+	bash -c 'cd plots && \
+	pdflatex "\newcommand{\DATAPATH}{../nebula_data/data/}\input{latency.tex}" && \
+	pdflatex "\newcommand{\DATAPATH}{../nebula_data/data/}\input{throughput.tex}" && \
+	pdflatex "\newcommand{\DATAPATH}{../nebula_data/data/}\input{casplot.tex}" && \
+	pdflatex "\newcommand{\DATAPATH}{../nebula_data/data/}\input{steal.tex}"'
+	
+
 small-bench: $(BUILD_DIR) $(NAME).so $(DATA_DIR)
 	@echo "Running small-bench ..."
 	@python benchmark.py
