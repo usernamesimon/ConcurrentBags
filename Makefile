@@ -1,4 +1,4 @@
-NAME = concurrentBags
+NAME = concurrentBagsSimple
 
 CC ?= gcc
 RM ?= @rm

@@ -5,10 +5,10 @@ typedef struct  TLS_t TLS_t;
 //Has to be called once to initiate structure
 void InitBag(int num_threads);
 //Has to be called by each thread to initiate thread local variables
-TLS_t *InitThread(int id);
+void InitThread(int id);
 
 
-void Add(TLS_t *thread, void *item);
-void *TryRemoveAny(TLS_t *thread);
+void Add(void *item);
+void *TryRemoveAny();
 
 
