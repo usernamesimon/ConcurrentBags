@@ -10,12 +10,12 @@ void InitThread(int id);
 void Add(void *item);
 void *TryRemoveAny();
 
-block_t* _Atomic NewNode(int);
+block_t* NewNode(int);
 
 void DeleteNode(block_t *node);
 
-block_t * DeRefLink(struct block_t * _Atomic* link);
+block_t * DeRefLink(struct block_t ** link);
 
 void ReleaseRef(block_t *node);
 
-void ReScan(block_t* _Atomic node);
+void ReScan(block_t*  node);

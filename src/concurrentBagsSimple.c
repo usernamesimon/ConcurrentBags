@@ -25,7 +25,7 @@
 // Initialization variables
 int Nr_threads;
 // Shared variables
-block_t *globalHeadBlock[MAX_NR_THREADS];
+block_t * globalHeadBlock[MAX_NR_THREADS];
 // Thread-local storage
 block_t *threadBlock, *stealBlock;
 bool foundAdd;
@@ -38,9 +38,9 @@ int numCASSuccess, numCASFail, numSteal;
                           numCASFail, numSteal)
 
 struct block_t {
-  DT *_Atomic nodes[MAX_BLOCK_SIZE]; // changed void*
+  DT * nodes[MAX_BLOCK_SIZE]; // changed void*
   long _Atomic notifyAdd[MAX_NR_THREADS / WORD_SIZE];
-  block_t *_Atomic next;
+  block_t * next;
 };
 
 struct bench_result {
@@ -189,7 +189,7 @@ void *TryRemoveAny() {
           if (foundAdd) {
             round = 0;
             i = 0;
-          } else if (stealBlock == NULL)
+          } else if (stealBlock == NULL && stealHead != MAX_BLOCK_SIZE)
             i++;
         } while (i < Nr_threads);
       } while (++round <= Nr_threads);
@@ -214,10 +214,10 @@ void *TryRemoveAny() {
   }
 }
 
-block_t *DeRefLink(struct block_t *_Atomic *link) { return (block_t *)*link; }
+block_t *DeRefLink(struct block_t **link) { return (block_t *)*link; }
 
-block_t *_Atomic NewNode(int size) {
-  block_t _Atomic *new = malloc(size);
+block_t * NewNode(int size) {
+  block_t * new = malloc(size);
   return new;
 };
 

@@ -70,13 +70,20 @@ class Benchmark:
                 Cassuc = 0
                 Casfail = 0
                 Steal = 0
+                skip = 0
                 for item in box:
+                    if skip== 0:
+                        skip +=1
+                        continue
                     times += item[0]
                     Cassuc += item[2]
                     Casfail += item[3]
                     Steal += item[4]
                     num_elems = item[1]
                 avg_time = times/len(box)
+                Cassuc = Cassuc/len(box)
+                Casfail = Casfail/len(box)
+                Steal = Steal/len(box)
                 datafile.write(f"{x} {num_elems} {avg_time} {num_elems*1000/avg_time} {Cassuc} {Casfail} {Steal}\n")
 
 def benchmark():
@@ -96,31 +103,33 @@ def benchmark():
 
     # The number of threads. This is the x-axis in the benchmark, i.e., the
     # parameter that is 'sweeped' over.
-    num_threads = [i*2 for i in range(1,5)]#,64]
+    num_threads = [i*2 for i in range(1,5)]
     num_threads.append(1)
+    # num_threads.append(2)
     num_threads = sorted(num_threads)
+    elements = 10000
 
     # Parameters for the benchmark are passed in a tuple, here (1000,). To pass
     # just one parameter, we cannot write (1000) because that would not parse
     # as a tuple, instead python understands a trailing comma as a tuple with
     # just one entry.
-    benchrand_10000 = Benchmark(binary.benchmark_random, (100000,), 20,
-                              num_threads, basedir, " benchrand_10000")
+    benchrand_10000 = Benchmark(binary.benchmark_random, (elements,), 11,
+                              num_threads, basedir, "benchrand_10000")
     
-    bench_add_remove_10000 = Benchmark(binary.benchmark_add_remove, (100000,), 20,
-                              num_threads, basedir, " bench_add_remove_10000")
+    bench_add_remove_10000 = Benchmark(binary.benchmark_add_remove, (elements,), 11,
+                              num_threads, basedir, "bench_add_remove_10000")
     
-    bench_half_half_10000 = Benchmark(binary.benchmark_half_half, (100000,), 20,
-                              num_threads, basedir, " bench_half_half_10000")
+    bench_half_half_10000 = Benchmark(binary.benchmark_half_half, (elements,), 11,
+                              num_threads, basedir, "bench_half_half_10000")
     
-    bench_one_producer_10000 = Benchmark(binary.benchmark_one_producer, (100000,), 20,
-                              num_threads, basedir, " bench_one_producer_10000")
+    bench_one_producer_10000 = Benchmark(binary.benchmark_one_producer, (elements,), 11,
+                              num_threads, basedir, "bench_one_producer_10000")
     
-    bench_one_consumer_10000 = Benchmark(binary.benchmark_one_consumer, (100000,), 20,
-                              num_threads, basedir, " bench_one_consumer_10000")
+    bench_one_consumer_10000 = Benchmark(binary.benchmark_one_consumer, (elements,), 11,
+                              num_threads, basedir, "bench_one_consumer_10000")
 
-    benchrand_10000_queue = Benchmark(binary_queue.benchmark_random, (100000,), 20,
-                               num_threads, basedir, " benchrand_10000_queue")
+    benchrand_10000_queue = Benchmark(binary_queue.benchmark_random, (elements,), 11,
+                               num_threads, basedir, "benchrand_10000_queue")
 
     benchrand_10000.run()
     benchrand_10000.write_avg_data()
