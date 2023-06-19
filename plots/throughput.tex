@@ -6,13 +6,14 @@
 \begin{document}
   \begin{tikzpicture}
     \begin{axis}[title={Throughput},              % Title of the graph
-                 xtick={1,2,4,8,16,32,64},  % The ticks on the x-axis
+                 xtick={1,4,8,16,32,48,64},  % The ticks on the x-axis
                  xlabel={number of threads},        % Label of the x-axis
                  ylabel={Ops per second},             % Label of the y-axis
                  legend style={
                    at={(1.05,0.95)},                % Position of the legend anchor
                    anchor=north west                % The legend anchor
-                 }]
+                 },
+                 ymode=log]
 
       % Each graph is added via \addplot and a .data file, and
       % add a legend entry for the previous graph.

@@ -12,11 +12,11 @@ BUILD_DIR = build
 DATA_DIR = data
 INCLUDES = inc
 
-OBJECTS = $(NAME).o 
+OBJECTS = $(NAME).o
 OBJECTSD = $(NAME).od
 
 
-all: $(BUILD_DIR) $(NAME) $(NAME).so
+all: $(BUILD_DIR) $(NAME) $(NAME).so queue.so
 	@echo "Built $(NAME)"
 
 $(DATA_DIR):
@@ -38,6 +38,9 @@ $(NAME): $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
 $(NAME).so: $(foreach object,$(OBJECTS),$(BUILD_DIR)/$(object))
 	@echo "Linking $(NAME)"
 	$(CC) $(CFLAGS) -fPIC -shared -o $@ $^ 
+
+queue.so: $(SRC_DIR)/queue.c
+	$(CC) $(CFLAGS) -fPIC -shared -o queue.so $(SRC_DIR)/queue.c
 
 debug: $(BUILD_DIR) $(NAME).d $(NAME).sod
 	@echo "Built $(NAME).d"
@@ -98,5 +101,6 @@ clean:
 	$(RM) -Rf $(BUILD_DIR)
 	$(RM) -f $(NAME) $(NAME).so
 	$(RM) -f $(NAME).d $(NAME).sod
+	$(RM) -f queue.so
 
 .PHONY: clean report
