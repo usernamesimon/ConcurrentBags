@@ -1,4 +1,4 @@
-NAME = concurrentBags
+NAME = concurrentBagsSimple
 
 CC ?= gcc
 RM ?= @rm
@@ -12,7 +12,7 @@ BUILD_DIR = build
 DATA_DIR = data
 INCLUDES = inc
 
-OBJECTS = $(NAME).o #UT_concurrentBags.o
+OBJECTS = $(NAME).o 
 OBJECTSD = $(NAME).od
 
 

@@ -27,17 +27,28 @@ int Nr_threads;
 // Shared variables
 block_t *globalHeadBlock[MAX_NR_THREADS];
 // Thread-local storage
-block_t *threadBlock, *stealBlock, *stealPrev;
+block_t *threadBlock, *stealBlock;
 bool foundAdd;
 int threadHead, stealHead, stealIndex;
 int threadID; // Unique number between 0 ... Nr_threads
+int numCASSuccess, numCASFail, numSteal;
 
-#pragma omp threadprivate(threadBlock, stealBlock, foundAdd, threadHead, stealHead, stealIndex, threadID)
+#pragma omp threadprivate(threadBlock, stealBlock, foundAdd, threadHead,       \
+                          stealHead, stealIndex, threadID, numCASSuccess,      \
+                          numCASFail, numSteal)
 
 struct block_t {
   DT *_Atomic nodes[MAX_BLOCK_SIZE]; // changed void*
   long _Atomic notifyAdd[MAX_NR_THREADS / WORD_SIZE];
   block_t *_Atomic next;
+};
+
+struct bench_result {
+  float time;
+  int num_items;
+  int num_CASSuccess;
+  int num_CASFail;
+  int num_Steal;
 };
 
 void NotifyAll(block_t *block) {
@@ -56,10 +67,13 @@ block_t *NewBlock() {
 
 void NotifyStart(block_t *block, int Id) {
   long old;
+  numCASFail--;
   do {
     old = block->notifyAdd[Id / WORD_SIZE];
+    numCASFail++;
   } while (!CAS(&block->notifyAdd[Id / WORD_SIZE], &old,
                 old | (1 << (Id % WORD_SIZE))));
+  numCASSuccess++;
 }
 
 bool NotifyCheck(block_t *block, int Id) {
@@ -78,8 +92,10 @@ void InitThread(int id) {
   threadHead = MAX_BLOCK_SIZE;
   stealIndex = 0;
   stealBlock = (block_t *)NULL;
-  stealPrev = (block_t *)NULL;
   stealHead = MAX_BLOCK_SIZE;
+  numCASSuccess = 0;
+  numCASFail = 0;
+  numSteal = 0;
 }
 
 void Add(void *item) {
@@ -147,8 +163,11 @@ void *TryStealBlock(int round) {
       if (data == NULL)
         head++;
       else if (CAS(&block->nodes[head], &data, NULL)) {
+        numCASSuccess++;
         stealHead = head;
         return data;
+      } else {
+        numCASFail++;
       }
     }
   }
@@ -158,11 +177,12 @@ void *TryRemoveAny() {
   int head = threadHead - 1;
   block_t *block = threadBlock;
   int round = 0;
-  for (;;) {                          
+  for (;;) {
     if (block == NULL || (head < 0 && block->next == NULL)) {
       do {
         int i = 0;
         do {
+          numSteal++;
           void *result = TryStealBlock(round);
           if (result != NULL)
             return result;
@@ -183,9 +203,11 @@ void *TryRemoveAny() {
       DT *data = block->nodes[head];
       if (data != NULL) {
         if (CAS(&block->nodes[head], &data, NULL)) {
+          numCASSuccess++;
           threadHead = head;
           return data;
         }
+        numCASFail++;
       }
       head--;
     }
@@ -199,6 +221,335 @@ block_t *_Atomic NewNode(int size) {
   return new;
 };
 
+struct bench_result benchmark_add_remove(int num_threads, int num_elems) {
+  // First add num_elems elements per thread and then remove them again
+  struct bench_result result;
+  double tic, toc;
+
+  omp_set_num_threads(num_threads);
+  InitBag(num_threads);
+
+  tic = omp_get_wtime();
+  {
+#pragma omp parallel for
+    for (int i = 0; i < num_threads; i++) {
+      InitThread(omp_get_thread_num());
+    }
+
+#pragma omp barrier
+
+#pragma omp parallel for
+    for (int i = 0; i < num_threads; i++) {
+      int val = omp_get_thread_num();
+      for (int j = 0; j < (int)(num_elems / (num_threads * 2)); j++) {
+        Add(&val);
+      }
+      for (int j = 0; j < (int)(num_elems / (num_threads * 2)); j++) {
+        int *res = (int *)(TryRemoveAny());
+      }
+    }
+  }
+  toc = omp_get_wtime();
+
+  int cassuc, casfail, steal = 0;
+#pragma omp parallel for reduction(+ : cassuc, casfail, steal)
+  for (int i = 0; i < num_threads; i++) {
+    cassuc += numCASSuccess;
+    casfail += numCASFail;
+    steal += numSteal;
+  }
+  result.num_CASSuccess = cassuc;
+  result.num_CASFail = casfail;
+  result.num_Steal = steal;
+  result.time = toc - tic;
+  result.num_items = num_threads * (int)(num_elems / num_threads);
+  return result;
+}
+
+struct bench_result benchmark_random(int num_threads, int num_elems) {
+  struct bench_result result;
+  double tic, toc;
+  srand(1);
+
+  omp_set_num_threads(num_threads);
+  InitBag(num_threads);
+
+  tic = omp_get_wtime();
+  {
+#pragma omp parallel for
+    for (int i = 0; i < num_threads; i++) {
+      InitThread(omp_get_thread_num());
+    }
+
+#pragma omp barrier
+
+#pragma omp parallel for
+    for (int i = 0; i < num_threads; i++) {
+      int val = omp_get_thread_num();
+      for (int j = 0; j < (int)(num_elems / num_threads); j++) {
+        if ((float)rand() / (float)(RAND_MAX) < 0.5) {
+          Add(&val);
+        } else {
+          int *res = (int *)(TryRemoveAny());
+        }
+      }
+    }
+  }
+  toc = omp_get_wtime();
+
+  int cassuc, casfail, steal = 0;
+#pragma omp parallel for reduction(+ : cassuc, casfail, steal)
+  for (int i = 0; i < num_threads; i++) {
+    cassuc += numCASSuccess;
+    casfail += numCASFail;
+    steal += numSteal;
+  }
+  result.num_CASSuccess = cassuc;
+  result.num_CASFail = casfail;
+  result.num_Steal = steal;
+  result.time = toc - tic;
+  result.num_items = num_threads * (int)(num_elems / num_threads);
+  return result;
+}
+
+struct bench_result benchmark_half_half(int num_threads, int num_elems) {
+  struct bench_result result;
+  double tic, toc;
+  srand(1);
+
+  omp_set_num_threads(num_threads);
+  InitBag(num_threads);
+
+  tic = omp_get_wtime();
+
+#pragma omp parallel for
+  for (int i = 0; i < num_threads; i++) {
+    InitThread(omp_get_thread_num());
+  }
+
+#pragma omp barrier
+
+#pragma omp parallel for
+  for (int i = 0; i < num_threads; i++) {
+    if (omp_get_thread_num() > (int)(num_threads / 2)) {
+      int val = omp_get_thread_num();
+      for (int j = 0; j < (int)(num_elems / num_threads); j++) {
+        Add(&val);
+      }
+
+    } else {
+      for (int j = 0; j < (int)(num_elems / num_threads); j++) {
+        int *res = (int *)(TryRemoveAny());
+      }
+    }
+  }
+  toc = omp_get_wtime();
+
+  int cassuc, casfail, steal = 0;
+#pragma omp parallel for reduction(+ : cassuc, casfail, steal)
+  for (int i = 0; i < num_threads; i++) {
+    cassuc += numCASSuccess;
+    casfail += numCASFail;
+    steal += numSteal;
+  }
+  result.num_CASSuccess = cassuc;
+  result.num_CASFail = casfail;
+  result.num_Steal = steal;
+  result.time = toc - tic;
+  result.num_items = num_threads * (int)(num_elems / num_threads);
+  return result;
+}
+
+struct bench_result benchmark_one_producer(int num_threads, int num_elems) {
+  struct bench_result result;
+  double tic, toc;
+
+  omp_set_num_threads(num_threads);
+  InitBag(num_threads);
+
+  tic = omp_get_wtime();
+
+#pragma omp parallel for
+  for (int i = 0; i < num_threads; i++) {
+    InitThread(omp_get_thread_num());
+  }
+
+#pragma omp barrier
+
+#pragma omp parallel for
+  for (int i = 0; i < num_threads; i++) {
+    if (omp_get_thread_num() == 0) {
+      int val = omp_get_thread_num();
+      for (int j = 0; j < (int)(num_elems / num_threads); j++) {
+        Add(&val);
+      }
+
+    } else {
+      for (int j = 0; j < (int)(num_elems / num_threads); j++) {
+        int *res = (int *)(TryRemoveAny());
+      }
+    }
+  }
+
+  toc = omp_get_wtime();
+
+  int cassuc, casfail, steal = 0;
+#pragma omp parallel for reduction(+ : cassuc, casfail, steal)
+  for (int i = 0; i < num_threads; i++) {
+    cassuc += numCASSuccess;
+    casfail += numCASFail;
+    steal += numSteal;
+  }
+  result.num_CASSuccess = cassuc;
+  result.num_CASFail = casfail;
+  result.num_Steal = steal;
+  result.time = toc - tic;
+  result.num_items = num_threads * (int)(num_elems / num_threads);
+  return result;
+}
+
+struct bench_result benchmark_one_consumer(int num_threads, int num_elems) {
+  struct bench_result result;
+  double tic, toc;
+
+  omp_set_num_threads(num_threads);
+  InitBag(num_threads);
+
+  tic = omp_get_wtime();
+
+#pragma omp parallel for
+  for (int i = 0; i < num_threads; i++) {
+    InitThread(omp_get_thread_num());
+  }
+
+#pragma omp barrier
+
+#pragma omp parallel for
+  for (int i = 0; i < num_threads; i++) {
+    if (omp_get_thread_num() != 0) {
+      int val = omp_get_thread_num();
+      for (int j = 0; j < (int)(num_elems / num_threads); j++) {
+        Add(&val);
+      }
+
+    } else {
+      for (int j = 0; j < (int)(num_elems / num_threads); j++) {
+        int *res = (int *)(TryRemoveAny());
+      }
+    }
+  }
+
+  toc = omp_get_wtime();
+
+  int cassuc, casfail, steal = 0;
+#pragma omp parallel for reduction(+ : cassuc, casfail, steal)
+  for (int i = 0; i < num_threads; i++) {
+    cassuc += numCASSuccess;
+    casfail += numCASFail;
+    steal += numSteal;
+  }
+  result.num_CASSuccess = cassuc;
+  result.num_CASFail = casfail;
+  result.num_Steal = steal;
+  result.time = toc - tic;
+  result.num_items = num_threads * (int)(num_elems / num_threads);
+  return result;
+}
+
+void UT_add_remove(int num_threads) {
+  omp_set_num_threads(num_threads);
+  InitBag(num_threads);
+
+  printf("-------------------------------------\n");
+  float tic, toc;
+  long genresult = 0;
+  int multiply = 100;
+  tic = omp_get_wtime();
+#pragma omp parallel for reduction(+ : genresult)
+  for (int i = 0; i < omp_get_num_threads(); i++) {
+    int id = omp_get_thread_num();
+    int mult = multiply;
+    long result = 0;
+    InitThread(id);
+
+    printf("Hello from thread %d\r\n", id + 1);
+    int *inc = NULL;
+
+    for (int j = 0; j < mult * 2; j++) {
+      if (j < mult) {
+        int *item = malloc(sizeof(int));
+        *item = 1;
+        Add(item);
+      } else {
+        inc = (int *)(TryRemoveAny());
+        if (inc != (int *)NULL) {
+          genresult += (long)*inc;
+        }
+      }
+    }
+    printf("Thread %d got result %ld\r\n", id + 1, genresult);
+  }
+  long expected = 0;
+
+  expected = multiply * num_threads;
+
+  printf("Got %ld overall, from %ld possible\r\n", genresult, expected);
+
+  toc = omp_get_wtime();
+
+  printf("Unit test took %lf seconds \r\n", toc - tic);
+}
+
+void UT_stealing(int num_threads) {
+  omp_set_num_threads(num_threads);
+  InitBag(num_threads);
+  float tic, toc;
+  printf("-------------------------------------\n");
+
+  long genresult = 0;
+  int multiply = 100;
+  tic = omp_get_wtime();
+#pragma omp parallel for reduction(+ : genresult)
+  for (int i = 0; i < omp_get_num_threads(); i++) {
+    int id = omp_get_thread_num();
+    int mult = multiply;
+    long result = 0;
+    InitThread(id);
+
+    printf("Hello from thread %d\r\n", id + 1);
+    int *inc = NULL;
+
+    if (i < num_threads / 2) {
+      for (int j = 0; j < mult * (id + 1); j++) {
+        int *item = malloc(sizeof(int));
+        *item = id + 1;
+        Add(item);
+      }
+    } else {
+      int tries = 0;
+      do {
+        inc = (int *)(TryRemoveAny());
+        if (inc != (int *)NULL) {
+          result += (long)*inc;
+          genresult += (long)*inc;
+        }
+        tries++;
+      } while (tries < 5000);
+      printf("Thread %d got result %ld\r\n", id + 1, result);
+    }
+  }
+  long expected = 0;
+  for (int i = 0; i < num_threads / 2; i++) {
+    expected += multiply * (i + 1) * (i + 1);
+  };
+
+  printf("Got %ld overall, from %ld possible\r\n", genresult, expected);
+
+  toc = omp_get_wtime();
+
+  printf("Unit test took %lf seconds \r\n", toc - tic);
+}
+
 int main(int argc, char *argv[]) {
   double tic, toc;
   int threads;
@@ -210,70 +561,7 @@ int main(int argc, char *argv[]) {
     threads = 4;
 
   printf("Running with %d threads\r\n", threads);
-  num_threads = threads;
 
-  omp_set_num_threads(num_threads);
-  InitBag(num_threads);
-
-  printf("-------------------------------------\n");
-
-  long genresult = 0;
-  int multiply = 100;
-  tic = omp_get_wtime();
-#pragma omp parallel for reduction(+:genresult)
-  for (int i = 0; i < omp_get_num_threads(); i++) {
-    int id = omp_get_thread_num();
-    int mult = multiply;
-    long result = 0;
-    InitThread(id);
-
-    printf("Hello from thread %d\r\n", id + 1);
-    int *inc = NULL;
-
-    if (i < threads / 2) {
-      for (int j = 0; j < mult * (id + 1); j++) {
-        int *item = malloc(sizeof(int));
-        *item = id + 1;
-        Add(item);
-        // printf("Thread %d added %d\r\n", id + 1, *item);
-      }
-    } else {
-      int tries = 0;
-      do {
-        inc = (int *)(TryRemoveAny());
-        if (inc != (int *)NULL) {
-          result += (long)*inc;
-          genresult += (long)*inc;
-        }
-        tries++;
-      } while (result < threads / 2 * mult * (2) && tries < 5000);
-      printf("Thread %d got result %ld\r\n", id + 1, result);
-    }
-
-    // for(int j = 0; j < mult*2; j++){
-    //   if(j< mult){
-    //     int *item = malloc(sizeof(int));
-    //     *item = 1;
-    //     Add(item);
-    //   }
-    //   else{
-    //     inc = (int *)(TryRemoveAny());
-    //     if (inc !=(int *)NULL){
-    //       genresult += (long)*inc;
-    //     }
-    //   }
-    // }
-    //  printf("Thread %d got result %ld\r\n", id + 1, genresult);
-  }
-  long expected = 0;
-  for (int i = 0; i < threads / 2; i++) {
-    expected += multiply * (i + 1) * (i + 1);
-  }
-  // expected = multiply*threads;
- 
-  printf("Got %ld overall, from %ld possible\r\n", genresult, expected);
-
-  toc = omp_get_wtime();
-
-  printf("Unit test took %lf seconds \r\n", toc - tic);
+  UT_add_remove(threads);
+  UT_stealing(threads);
 }
